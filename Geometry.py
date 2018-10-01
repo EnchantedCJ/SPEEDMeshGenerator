@@ -9,13 +9,12 @@ class Point(object):
         self.x = x
         self.y = y
         self.z = z
-        pass
-
-    pass
 
 
 class Surface(object):
-    def __init__(self):
+    def __init__(self, points):
+        self.id = 0
+        self.points = points
         pass
 
     pass
@@ -23,7 +22,7 @@ class Surface(object):
 
 class Hex(object):
     def __init__(self, points):
-        self.id=0
+        self.id = 0
         self.points = points
         self.calCenter()
 
@@ -52,6 +51,9 @@ class Layer(object):
         self.meshz = 0
         self.ptcount = 0
         self.hexcount = 0
+        self.surfcount = 0
+        self.DGsurfcount = 0
+        self.ABSOsurfcount = 0
 
 
 class Site(object):
@@ -64,8 +66,13 @@ class Site(object):
         self.maxy = 0
         self.points = []
         self.hexes = []
+        self.DGsurfs = []
+        self.ABSOsurfs = []
         self.ptcount = 0
         self.hexcount = 0
+        self.surfcount = 0
+        self.DGsurfcount = 0
+        self.ABSOsurfcount = 0
 
     def iptCoordSiteCorner(self, dir):
         with open(dir, 'r', encoding='utf-8') as f:
@@ -142,15 +149,15 @@ class Site(object):
                         print(pt.id, ptx, pty, ptz)
 
                         # ax.scatter([ptx], [pty], [ptz], color='r')
-        # plt.show()
+                        # plt.show()
 
     def genHex(self):
         # my order
 
-        #   3---4
-        #  /|  /|
-        # 1---2
-        # | 7-|-8
+        #   3---4    z
+        #  /|  /|    | /y
+        # 1---2      |/
+        # | 7-|-8     --- x
         # 5---6/
 
         # tianyuan order
@@ -161,15 +168,15 @@ class Site(object):
         # | 4-|-3
         # 1---2/
 
-        fig = plt.figure()
-        ax = fig.gca(projection='3d')
+        # fig = plt.figure()
+        # ax = fig.gca(projection='3d')
 
         idbase = 0
         for ly in self.layers:
-            if ly.id==1:
+            if ly.id == 1:
                 pass
             else:
-                idbase += self.layers[ly.id-2].ptcount  #id加上一层的总节点数
+                idbase += self.layers[ly.id - 2].ptcount  # 每个layer的起始点，id叠加上一层的总节点数
             for i in range(ly.meshz):
                 for j in range(ly.meshy):
                     for k in range(ly.meshx):
@@ -188,20 +195,174 @@ class Site(object):
                         hex = Hex(ptlist)
                         self.hexcount += 1
                         ly.hexcount += 1
-                        hex.id=self.hexcount
+                        hex.id = self.hexcount
                         self.hexes.append(hex)
                         print(hex.id, end="\t")
                         for m in range(len(hex.points)):
                             print(hex.points[m].id, end="\t")
                         print('\n')
 
-                        ax.scatter([hex.center.x], [hex.center.y], [hex.center.z], color='b')
-        plt.show()
-
-
+                        # ax.scatter([hex.center.x], [hex.center.y], [hex.center.z], color='b')
+                        # plt.show()
 
     def genDGSurface(self):
-        pass
+        # my order
+        # 3 -- 4   y
+        # |    |   |
+        # 1 -- 2   ----x
+
+        # tianyuan order
+        # 1 -- 2   y
+        # |    |   |
+        # 4 -- 3   ----x
+
+        # fig = plt.figure()
+        # ax = fig.gca(projection='3d')
+
+        idbase = 0
+        for ly in self.layers:
+            if ly.id == 1:
+                pass
+            else:
+                idbase += self.layers[ly.id - 2].ptcount  # 每个layer的起始点，id叠加上一层的总节点数
+            for i in [0, ly.meshz]:  # 每个layer的最上层和最下层
+                if i == 0 and ly.id == 1:
+                    continue  # 第一个layer的最上层不设DG面
+                if i == ly.meshz and ly.id == len(self.layers):
+                    continue  # 最后一个layer的最下层不设DG面
+                for j in range(ly.meshy):
+                    for k in range(ly.meshx):
+                        id1 = idbase + (ly.meshx + 1) * (ly.meshy + 1) * i + (ly.meshx + 1) * j + k + 1
+                        id2 = id1 + 1
+                        id3 = id1 + (ly.meshx + 1)
+                        id4 = id3 + 1
+                        idlist = [id3, id4, id2, id1]
+                        ptlist = []
+                        for id in idlist:
+                            ptlist.append(self.points[id - 1])  # list start from 0
+                        surf = Surface(ptlist)
+                        self.DGsurfcount += 1
+                        self.surfcount += 1
+                        ly.DGsurfcount += 1
+                        ly.surfcount += 1
+                        surf.id = self.surfcount
+                        self.DGsurfs.append(surf)
+                        print(surf.id, end="\t")
+                        for m in range(len(surf.points)):
+                            print(surf.points[m].id, end="\t")
+                            # ax.scatter([surf.points[m].x], [surf.points[m].y], [surf.points[m].z], color='g')
+                        print('\n')
+
+                        # plt.show()
 
     def genABSOSurface(self):
-        pass
+        # my order
+
+        # surf 1~4        surf bottom
+        # 1 -- 2          3 -- 4
+        # |    |          |    |
+        # 3 -- 4          1 -- 2
+
+        # tianyuan order
+
+        # what are surf 1~4
+        #    ---        z
+        #  /| 3/|       | /y
+        #  --- 2        |/
+        # |41-|-        --- x
+        #  --- /
+
+        # surf 1          surf 2          surf 3          surf 4          surf bottom
+        # 4 -- 3   z      4 -- 3   z      3 -- 4   z      3 -- 4   z      1 -- 2   y
+        # |    |   |      |    |   |      |    |   |      |    |   |      |    |   |
+        # 1 -- 2   ----x  1 -- 2   ----y  2 -- 1   ----x  2 -- 1   ----y  4 -- 3   ----x
+
+        fig = plt.figure()
+        ax = fig.gca(projection='3d')
+
+        idbase = 0
+        for ly in self.layers:
+            if ly.id == 1:
+                pass
+            else:
+                idbase += self.layers[ly.id - 2].ptcount  # 每个layer的起始点，id叠加上一层的总节点数
+            for i in range(ly.meshz):
+                # surf 1 and 3
+                for j in [0, ly.meshy]:
+                    for k in range(ly.meshx):
+                        id1 = idbase + (ly.meshx + 1) * (ly.meshy + 1) * i + (ly.meshx + 1) * j + k + 1
+                        id2 = id1 + 1
+                        id3 = id1 + (ly.meshx + 1) * (ly.meshy + 1)
+                        id4 = id3 + 1
+                        if j == 0:  # surf 1
+                            idlist = [id3, id4, id2, id1]
+                        else:  # surf 3
+                            idlist = [id4, id3, id1, id2]
+                        ptlist = []
+                        for id in idlist:
+                            ptlist.append(self.points[id - 1])  # list start from 0
+                        surf = Surface(ptlist)
+                        self.ABSOsurfcount += 1
+                        self.surfcount += 1
+                        ly.ABSOsurfcount += 1
+                        ly.surfcount += 1
+                        surf.id = self.surfcount
+                        self.ABSOsurfs.append(surf)
+                        print(surf.id, end="\t")
+                        for m in range(len(surf.points)):
+                            print(surf.points[m].id, end="\t")
+                            ax.scatter([surf.points[m].x], [surf.points[m].y], [surf.points[m].z], color='k')
+                        print('\n')
+                # surf 2 and 4
+                for k in [ly.meshx,0]:
+                    for j in range(ly.meshy):
+                        id1 = idbase + (ly.meshx + 1) * (ly.meshy + 1) * i + (ly.meshx + 1) * j + k + 1
+                        id2 = id1 + (ly.meshx + 1)
+                        id3 = id1 + (ly.meshx + 1) * (ly.meshy + 1)
+                        id4 = id3 + (ly.meshx + 1)
+                        if k == ly.meshx:  # surf 2
+                            idlist = [id3, id4, id2, id1]
+                        else:  # surf 4
+                            idlist = [id4, id3, id1, id2]
+                        ptlist = []
+                        for id in idlist:
+                            ptlist.append(self.points[id - 1])  # list start from 0
+                        surf = Surface(ptlist)
+                        self.ABSOsurfcount += 1
+                        self.surfcount += 1
+                        ly.ABSOsurfcount += 1
+                        ly.surfcount += 1
+                        surf.id = self.surfcount
+                        self.ABSOsurfs.append(surf)
+                        print(surf.id, end="\t")
+                        for m in range(len(surf.points)):
+                            print(surf.points[m].id, end="\t")
+                            ax.scatter([surf.points[m].x], [surf.points[m].y], [surf.points[m].z], color='k')
+                        print('\n')
+            # surf bottom
+            if ly.id==len(self.layers):
+                i=ly.meshz
+                for j in range(ly.meshy):
+                    for k in range(ly.meshx):
+                        id1 = idbase + (ly.meshx + 1) * (ly.meshy + 1) * i + (ly.meshx + 1) * j + k + 1
+                        id2 = id1 + 1
+                        id3 = id1 + (ly.meshx + 1)
+                        id4 = id3 + 1
+                        idlist = [id3, id4, id2, id1]
+                        ptlist = []
+                        for id in idlist:
+                            ptlist.append(self.points[id - 1])  # list start from 0
+                        surf = Surface(ptlist)
+                        self.ABSOsurfcount += 1
+                        self.surfcount += 1
+                        ly.ABSOsurfcount += 1
+                        ly.surfcount += 1
+                        surf.id = self.surfcount
+                        self.ABSOsurfs.append(surf)
+                        print(surf.id, end="\t")
+                        for m in range(len(surf.points)):
+                            print(surf.points[m].id, end="\t")
+                            ax.scatter([surf.points[m].x], [surf.points[m].y], [surf.points[m].z], color='k')
+                        print('\n')
+
+        plt.show()
