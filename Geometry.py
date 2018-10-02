@@ -15,6 +15,7 @@ class Surface(object):
     def __init__(self, points):
         self.id = 0
         self.points = points
+        self.mate = 0
         pass
 
     pass
@@ -24,6 +25,7 @@ class Hex(object):
     def __init__(self, points):
         self.id = 0
         self.points = points
+        self.mate = 0
         self.calCenter()
 
     def calCenter(self):
@@ -56,6 +58,14 @@ class Layer(object):
         self.ABSOsurfcount = 0
 
 
+class Drill(object):
+    def __init__(self, x, y):
+        self.id = 0
+        self.x = x
+        self.y = y
+        pass
+
+
 class Site(object):
     def __init__(self):
         self.corners = []
@@ -64,6 +74,7 @@ class Site(object):
         self.maxx = 0
         self.miny = 0
         self.maxy = 0
+
         self.points = []
         self.hexes = []
         self.DGsurfs = []
@@ -73,6 +84,10 @@ class Site(object):
         self.surfcount = 0
         self.DGsurfcount = 0
         self.ABSOsurfcount = 0
+
+        self.drills = []
+        self.drcount = 0
+        self.matecount = 0
 
     def iptCoordSiteCorner(self, dir):
         with open(dir, 'r', encoding='utf-8') as f:
@@ -113,7 +128,59 @@ class Site(object):
                 ly.meshz = int(ly.depth / ly.meshLength)
                 print('Layer{i} mesh num: {x} x {y} x {z}'.format(i=ly.id, x=ly.meshx, y=ly.meshy, z=ly.meshz))
 
-        pass
+    def iptCoordDrill(self, dir):
+        with open(dir, 'r', encoding='utf-8') as f:
+            f.readline()
+            for line in f.readlines():
+                temp = line.strip('\n').split()
+                id = int(temp[0])
+                x = float(temp[1])
+                y = float(temp[2])
+                dr = Drill(x, y)
+                dr.id = id
+                self.drills.append(dr)
+                self.drcount += 1
+                print('Drill{id} {x} {y}'.format(id=id, x=x, y=y))
+
+    def optMesh(self, dir):
+        with open(dir, 'w', encoding='utf-8') as f:
+            # headline
+            f.write('%10d' % self.ptcount)  # number of nodes
+            f.write('%10d' % (self.hexcount + self.surfcount))  # number of elements
+            for i in range(3):
+                f.write('%10d' % 0)
+            f.write('\n')
+            # nodes
+            for pt in self.points:
+                f.write('%d  ' % pt.id)
+                f.write('%15.7e' % pt.x)
+                f.write('%15.7e' % pt.y)
+                f.write('%15.7e' % pt.z)
+                f.write('\n')
+            # ABSO surface
+            for surf in self.ABSOsurfs:
+                f.write('%d' % surf.id)
+                f.write('%10d' % surf.mate)
+                f.write(' quad ')
+                for pt in surf.points:
+                    f.write('%10d' % pt.id)
+                f.write('\n')
+            # DG surface
+            for surf in self.DGsurfs:
+                f.write('%d' % surf.id)
+                f.write('%10d' % surf.mate)
+                f.write(' quad ')
+                for pt in surf.points:
+                    f.write('%10d' % pt.id)
+                f.write('\n')
+            # hexes
+            for hex in self.hexes:
+                f.write('%d' % hex.id)
+                f.write('%10d' % hex.mate)
+                f.write(' hex ')
+                for pt in hex.points:
+                    f.write('%10d' % pt.id)
+                f.write('\n')
 
     def genPoint(self):
         # fig = plt.figure()
@@ -192,18 +259,208 @@ class Site(object):
                         ptlist = []
                         for id in idlist:
                             ptlist.append(self.points[id - 1])  # list start from 0
+
                         hex = Hex(ptlist)
                         self.hexcount += 1
                         ly.hexcount += 1
                         hex.id = self.hexcount
+                        # different materials when belong to different drills
+                        nearestDrill = self._findNearestDrill(hex)
+                        hex.mate = self.matecount + nearestDrill.id
                         self.hexes.append(hex)
+
                         print(hex.id, end="\t")
+                        print('{m} hex'.format(m=hex.mate), end="\t")
                         for m in range(len(hex.points)):
                             print(hex.points[m].id, end="\t")
                         print('\n')
-
                         # ax.scatter([hex.center.x], [hex.center.y], [hex.center.z], color='b')
-                        # plt.show()
+
+                # different materials when meshz increases
+                self.matecount += self.drcount
+
+                # plt.show()
+
+    def _findNearestDrill(self, hex):
+        dists = []
+        for drill in self.drills:
+            dist = pow(pow(hex.center.x - drill.x, 2) + pow(hex.center.y - drill.y, 2), 0.5)
+            dists.append(dist)
+        nearestID = dists.index(min(dists)) + 1
+        return self.drills[nearestID - 1]
+
+    def genABSOSurface(self):
+        # my order
+
+        # surf 1~4        surf bottom
+        # 1 -- 2          3 -- 4
+        # |    |          |    |
+        # 3 -- 4          1 -- 2
+
+        # tianyuan order
+
+        # what are surf 1~4
+        #    ---        z
+        #  /| 3/|       | /y
+        #  --- 2        |/
+        # |41-|-        --- x
+        #  --- /
+
+        # surf 1          surf 2          surf 3          surf 4          surf bottom
+        # 4 -- 3   z      4 -- 3   z      3 -- 4   z      3 -- 4   z      1 -- 2   y
+        # |    |   |      |    |   |      |    |   |      |    |   |      |    |   |
+        # 1 -- 2   ----x  1 -- 2   ----y  2 -- 1   ----x  2 -- 1   ----y  4 -- 3   ----x
+
+        fig = plt.figure()
+        ax = fig.gca(projection='3d')
+
+        idbase = 0
+        for ly in self.layers:
+            if ly.id == 1:
+                pass
+            else:
+                idbase += self.layers[ly.id - 2].ptcount  # 每个layer的起始点，id叠加上一层的总节点数
+            for i in range(ly.meshz):
+                # surf 1
+                j = 0
+                for k in range(ly.meshx):
+                    id1 = idbase + (ly.meshx + 1) * (ly.meshy + 1) * i + (ly.meshx + 1) * j + k + 1
+                    id2 = id1 + 1
+                    id3 = id1 + (ly.meshx + 1) * (ly.meshy + 1)
+                    id4 = id3 + 1
+                    idlist = [id3, id4, id2, id1]
+                    ptlist = []
+                    for id in idlist:
+                        ptlist.append(self.points[id - 1])  # list start from 0
+
+                    surf = Surface(ptlist)
+                    self.ABSOsurfcount += 1
+                    self.surfcount += 1
+                    ly.ABSOsurfcount += 1
+                    ly.surfcount += 1
+                    surf.id = self.surfcount
+                    surf.mate = self.matecount + 2
+                    self.ABSOsurfs.append(surf)
+
+                    print(surf.id, end="\t")
+                    print('{m} quad'.format(m=surf.mate), end="\t")
+                    for m in range(len(surf.points)):
+                        print(surf.points[m].id, end="\t")
+                        # ax.scatter([surf.points[m].x], [surf.points[m].y], [surf.points[m].z], color='k')
+                    print('\n')
+                # surf 2
+                k = ly.meshx
+                for j in range(ly.meshy):
+                    id1 = idbase + (ly.meshx + 1) * (ly.meshy + 1) * i + (ly.meshx + 1) * j + k + 1
+                    id2 = id1 + (ly.meshx + 1)
+                    id3 = id1 + (ly.meshx + 1) * (ly.meshy + 1)
+                    id4 = id3 + (ly.meshx + 1)
+                    idlist = [id3, id4, id2, id1]
+                    ptlist = []
+                    for id in idlist:
+                        ptlist.append(self.points[id - 1])  # list start from 0
+
+                    surf = Surface(ptlist)
+                    self.ABSOsurfcount += 1
+                    self.surfcount += 1
+                    ly.ABSOsurfcount += 1
+                    ly.surfcount += 1
+                    surf.id = self.surfcount
+                    surf.mate = self.matecount + 3
+                    self.ABSOsurfs.append(surf)
+
+                    print(surf.id, end="\t")
+                    print('{m} quad'.format(m=surf.mate), end="\t")
+                    for m in range(len(surf.points)):
+                        print(surf.points[m].id, end="\t")
+                        # ax.scatter([surf.points[m].x], [surf.points[m].y], [surf.points[m].z], color='k')
+                    print('\n')
+                # surf 3
+                j = ly.meshy
+                for k in range(ly.meshx):
+                    id1 = idbase + (ly.meshx + 1) * (ly.meshy + 1) * i + (ly.meshx + 1) * j + k + 1
+                    id2 = id1 + 1
+                    id3 = id1 + (ly.meshx + 1) * (ly.meshy + 1)
+                    id4 = id3 + 1
+                    idlist = [id4, id3, id1, id2]
+                    ptlist = []
+                    for id in idlist:
+                        ptlist.append(self.points[id - 1])  # list start from 0
+
+                    surf = Surface(ptlist)
+                    self.ABSOsurfcount += 1
+                    self.surfcount += 1
+                    ly.ABSOsurfcount += 1
+                    ly.surfcount += 1
+                    surf.id = self.surfcount
+                    surf.mate = self.matecount + 4
+                    self.ABSOsurfs.append(surf)
+
+                    print(surf.id, end="\t")
+                    print('{m} quad'.format(m=surf.mate), end="\t")
+                    for m in range(len(surf.points)):
+                        print(surf.points[m].id, end="\t")
+                        # ax.scatter([surf.points[m].x], [surf.points[m].y], [surf.points[m].z], color='k')
+                    print('\n')
+                # surf 4
+                k = 0
+                for j in range(ly.meshy):
+                    id1 = idbase + (ly.meshx + 1) * (ly.meshy + 1) * i + (ly.meshx + 1) * j + k + 1
+                    id2 = id1 + (ly.meshx + 1)
+                    id3 = id1 + (ly.meshx + 1) * (ly.meshy + 1)
+                    id4 = id3 + (ly.meshx + 1)
+                    idlist = [id4, id3, id1, id2]
+                    ptlist = []
+                    for id in idlist:
+                        ptlist.append(self.points[id - 1])  # list start from 0
+
+                    surf = Surface(ptlist)
+                    self.ABSOsurfcount += 1
+                    self.surfcount += 1
+                    ly.ABSOsurfcount += 1
+                    ly.surfcount += 1
+                    surf.id = self.surfcount
+                    surf.mate = self.matecount + 5
+                    self.ABSOsurfs.append(surf)
+
+                    print(surf.id, end="\t")
+                    print('{m} quad'.format(m=surf.mate), end="\t")
+                    for m in range(len(surf.points)):
+                        print(surf.points[m].id, end="\t")
+                        # ax.scatter([surf.points[m].x], [surf.points[m].y], [surf.points[m].z], color='k')
+                    print('\n')
+            # surf bottom
+            if ly.id == len(self.layers):
+                i = ly.meshz
+                for j in range(ly.meshy):
+                    for k in range(ly.meshx):
+                        id1 = idbase + (ly.meshx + 1) * (ly.meshy + 1) * i + (ly.meshx + 1) * j + k + 1
+                        id2 = id1 + 1
+                        id3 = id1 + (ly.meshx + 1)
+                        id4 = id3 + 1
+                        idlist = [id3, id4, id2, id1]
+                        ptlist = []
+                        for id in idlist:
+                            ptlist.append(self.points[id - 1])  # list start from 0
+
+                        surf = Surface(ptlist)
+                        self.ABSOsurfcount += 1
+                        self.surfcount += 1
+                        ly.ABSOsurfcount += 1
+                        ly.surfcount += 1
+                        surf.id = self.surfcount
+                        surf.mate = self.matecount + 1
+                        self.ABSOsurfs.append(surf)
+
+                        print(surf.id, end="\t")
+                        print('{m} quad'.format(m=surf.mate), end="\t")
+                        for m in range(len(surf.points)):
+                            print(surf.points[m].id, end="\t")
+                            # ax.scatter([surf.points[m].x], [surf.points[m].y], [surf.points[m].z], color='k')
+                        print('\n')
+
+        self.matecount += 5
+        # plt.show()
 
     def genDGSurface(self):
         # my order
@@ -240,129 +497,23 @@ class Site(object):
                         ptlist = []
                         for id in idlist:
                             ptlist.append(self.points[id - 1])  # list start from 0
+
                         surf = Surface(ptlist)
                         self.DGsurfcount += 1
                         self.surfcount += 1
                         ly.DGsurfcount += 1
                         ly.surfcount += 1
                         surf.id = self.surfcount
+                        surf.mate = self.matecount + 1
                         self.DGsurfs.append(surf)
+
                         print(surf.id, end="\t")
+                        print('{m} quad'.format(m=surf.mate), end="\t")
                         for m in range(len(surf.points)):
                             print(surf.points[m].id, end="\t")
                             # ax.scatter([surf.points[m].x], [surf.points[m].y], [surf.points[m].z], color='g')
                         print('\n')
 
-                        # plt.show()
-
-    def genABSOSurface(self):
-        # my order
-
-        # surf 1~4        surf bottom
-        # 1 -- 2          3 -- 4
-        # |    |          |    |
-        # 3 -- 4          1 -- 2
-
-        # tianyuan order
-
-        # what are surf 1~4
-        #    ---        z
-        #  /| 3/|       | /y
-        #  --- 2        |/
-        # |41-|-        --- x
-        #  --- /
-
-        # surf 1          surf 2          surf 3          surf 4          surf bottom
-        # 4 -- 3   z      4 -- 3   z      3 -- 4   z      3 -- 4   z      1 -- 2   y
-        # |    |   |      |    |   |      |    |   |      |    |   |      |    |   |
-        # 1 -- 2   ----x  1 -- 2   ----y  2 -- 1   ----x  2 -- 1   ----y  4 -- 3   ----x
-
-        fig = plt.figure()
-        ax = fig.gca(projection='3d')
-
-        idbase = 0
-        for ly in self.layers:
-            if ly.id == 1:
-                pass
-            else:
-                idbase += self.layers[ly.id - 2].ptcount  # 每个layer的起始点，id叠加上一层的总节点数
-            for i in range(ly.meshz):
-                # surf 1 and 3
-                for j in [0, ly.meshy]:
-                    for k in range(ly.meshx):
-                        id1 = idbase + (ly.meshx + 1) * (ly.meshy + 1) * i + (ly.meshx + 1) * j + k + 1
-                        id2 = id1 + 1
-                        id3 = id1 + (ly.meshx + 1) * (ly.meshy + 1)
-                        id4 = id3 + 1
-                        if j == 0:  # surf 1
-                            idlist = [id3, id4, id2, id1]
-                        else:  # surf 3
-                            idlist = [id4, id3, id1, id2]
-                        ptlist = []
-                        for id in idlist:
-                            ptlist.append(self.points[id - 1])  # list start from 0
-                        surf = Surface(ptlist)
-                        self.ABSOsurfcount += 1
-                        self.surfcount += 1
-                        ly.ABSOsurfcount += 1
-                        ly.surfcount += 1
-                        surf.id = self.surfcount
-                        self.ABSOsurfs.append(surf)
-                        print(surf.id, end="\t")
-                        for m in range(len(surf.points)):
-                            print(surf.points[m].id, end="\t")
-                            ax.scatter([surf.points[m].x], [surf.points[m].y], [surf.points[m].z], color='k')
-                        print('\n')
-                # surf 2 and 4
-                for k in [ly.meshx,0]:
-                    for j in range(ly.meshy):
-                        id1 = idbase + (ly.meshx + 1) * (ly.meshy + 1) * i + (ly.meshx + 1) * j + k + 1
-                        id2 = id1 + (ly.meshx + 1)
-                        id3 = id1 + (ly.meshx + 1) * (ly.meshy + 1)
-                        id4 = id3 + (ly.meshx + 1)
-                        if k == ly.meshx:  # surf 2
-                            idlist = [id3, id4, id2, id1]
-                        else:  # surf 4
-                            idlist = [id4, id3, id1, id2]
-                        ptlist = []
-                        for id in idlist:
-                            ptlist.append(self.points[id - 1])  # list start from 0
-                        surf = Surface(ptlist)
-                        self.ABSOsurfcount += 1
-                        self.surfcount += 1
-                        ly.ABSOsurfcount += 1
-                        ly.surfcount += 1
-                        surf.id = self.surfcount
-                        self.ABSOsurfs.append(surf)
-                        print(surf.id, end="\t")
-                        for m in range(len(surf.points)):
-                            print(surf.points[m].id, end="\t")
-                            ax.scatter([surf.points[m].x], [surf.points[m].y], [surf.points[m].z], color='k')
-                        print('\n')
-            # surf bottom
-            if ly.id==len(self.layers):
-                i=ly.meshz
-                for j in range(ly.meshy):
-                    for k in range(ly.meshx):
-                        id1 = idbase + (ly.meshx + 1) * (ly.meshy + 1) * i + (ly.meshx + 1) * j + k + 1
-                        id2 = id1 + 1
-                        id3 = id1 + (ly.meshx + 1)
-                        id4 = id3 + 1
-                        idlist = [id3, id4, id2, id1]
-                        ptlist = []
-                        for id in idlist:
-                            ptlist.append(self.points[id - 1])  # list start from 0
-                        surf = Surface(ptlist)
-                        self.ABSOsurfcount += 1
-                        self.surfcount += 1
-                        ly.ABSOsurfcount += 1
-                        ly.surfcount += 1
-                        surf.id = self.surfcount
-                        self.ABSOsurfs.append(surf)
-                        print(surf.id, end="\t")
-                        for m in range(len(surf.points)):
-                            print(surf.points[m].id, end="\t")
-                            ax.scatter([surf.points[m].x], [surf.points[m].y], [surf.points[m].z], color='k')
-                        print('\n')
-
-        plt.show()
+                # different materials when i changes
+                self.matecount += 1
+                # plt.show()
