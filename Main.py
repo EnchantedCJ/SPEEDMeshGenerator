@@ -1,9 +1,9 @@
 # -*- coding:utf-8 -*-
-import Geometry as geo
+import Geometry as Geo
 
 
 def main():
-    mySite = geo.Site()
+    mySite = Geo.Site()
     mySite.iptCoordSiteCorner('./input/coordSiteCorner.txt')
     mySite.iptMeshConfig('./input/meshConfig.txt')
     mySite.iptCoordDrill('./input/coordDrill.txt')

@@ -1,6 +1,6 @@
 # -*- coding:utf-8 -*-
 import matplotlib.pyplot as plt
-from  mpl_toolkits.mplot3d import Axes3D
+from mpl_toolkits.mplot3d import Axes3D
 
 
 class Point(object):
@@ -44,10 +44,12 @@ class Hex(object):
 
 
 class Layer(object):
-    def __init__(self, depth, meshLength):
+    def __init__(self, depth, meshSize):
         self.id = 0
         self.depth = depth
-        self.meshLength = meshLength
+        self.mSize_x = meshSize[0]
+        self.mSize_y = meshSize[1]
+        self.mSize_z = meshSize[2]
         self.meshx = 0
         self.meshy = 0
         self.meshz = 0
@@ -56,6 +58,8 @@ class Layer(object):
         self.surfcount = 0
         self.DGsurfcount = 0
         self.ABSOsurfcount = 0
+        self.connectUp = False
+        self.connectLow = False
 
 
 class Drill(object):
@@ -118,14 +122,17 @@ class Site(object):
                 temp = line.strip('\n').split()
                 id = int(temp[0])
                 depth = float(temp[1])
-                meshLength = float(temp[2])
-                ly = Layer(depth, meshLength)
+                mSize_x = float(temp[2])
+                mSize_y = float(temp[3])
+                mSize_z = float(temp[4])
+                meshSize = [mSize_x, mSize_y, mSize_z]
+                ly = Layer(depth, meshSize)
                 ly.id = id
                 self.layers.append(ly)
 
-                ly.meshx = int((self.maxx - self.minx) / ly.meshLength)
-                ly.meshy = int((self.maxy - self.miny) / ly.meshLength)
-                ly.meshz = int(ly.depth / ly.meshLength)
+                ly.meshx = int((self.maxx - self.minx) / ly.mSize_x)
+                ly.meshy = int((self.maxy - self.miny) / ly.mSize_y)
+                ly.meshz = int(ly.depth / ly.mSize_z)
                 print('Layer{i} mesh num: {x} x {y} x {z}'.format(i=ly.id, x=ly.meshx, y=ly.meshy, z=ly.meshz))
 
     def iptCoordDrill(self, dir):
@@ -190,23 +197,40 @@ class Site(object):
         ptx = 0
         pty = 0
         ptz = 0
+
+        # 判断连接性
+        lastSize_x = -1
+        lastSize_y = -1
+        for i in range(len(self.layers)):
+            thisSize_x = self.layers[i].mSize_x
+            thisSize_y = self.layers[i].mSize_y
+            if thisSize_x == lastSize_x and thisSize_y == lastSize_y:
+                self.layers[i - 1].connectUp = True
+                self.layers[i].connectLow = True
+            lastSize_x = thisSize_x
+            lastSize_y = thisSize_y
+
         for ly in self.layers:
 
-            for i in range(ly.meshz + 1):
-                if i == 0:
+            if ly.connectLow:
+                iterz = ly.meshz  # 如果连接，不重复连接高度处的点
+            else:
+                iterz = ly.meshz + 1
+            for i in range(iterz):
+                if i == 0 and not ly.connectLow:
                     pass
                 else:
-                    ptz = ptz - ly.meshLength
+                    ptz = ptz - ly.mSize_z
                 for j in range(ly.meshy + 1):
                     if j == 0:
-                        pty = self.miny
+                        pty = self.miny  # 重置为左下角点
                     else:
-                        pty = pty + ly.meshLength
+                        pty = pty + ly.mSize_y
                     for k in range(ly.meshx + 1):
                         if k == 0:
-                            ptx = self.minx
+                            ptx = self.minx  # 重置为左下角点
                         else:
-                            ptx = ptx + ly.meshLength
+                            ptx = ptx + ly.mSize_x
 
                         pt = Point(ptx, pty, ptz)
                         self.ptcount += 1
@@ -244,6 +268,8 @@ class Site(object):
                 pass
             else:
                 idbase += self.layers[ly.id - 2].ptcount  # 每个layer的起始点，id叠加上一层的总节点数
+            if ly.connectLow:  # 如果连接，该layer最上层点与上个layer最下层点重合，idbase应折减上个layer一层的点数
+                idbase -= (self.layers[ly.id - 2].meshx + 1) * (self.layers[ly.id - 2].meshy + 1)
             for i in range(ly.meshz):
                 for j in range(ly.meshy):
                     for k in range(ly.meshx):
@@ -320,6 +346,8 @@ class Site(object):
                 pass
             else:
                 idbase += self.layers[ly.id - 2].ptcount  # 每个layer的起始点，id叠加上一层的总节点数
+            if ly.connectLow:  # 如果连接，该layer最上层点与上个layer最下层点重合，idbase应折减上个layer一层的点数
+                idbase -= (self.layers[ly.id - 2].meshx + 1) * (self.layers[ly.id - 2].meshy + 1)
             for i in range(ly.meshz):
                 # surf 1
                 j = 0
@@ -482,11 +510,18 @@ class Site(object):
                 pass
             else:
                 idbase += self.layers[ly.id - 2].ptcount  # 每个layer的起始点，id叠加上一层的总节点数
+            if ly.connectLow:  # 如果连接，该layer最上层点与上个layer最下层点重合，idbase应折减上个layer一层的点数
+                idbase -= (self.layers[ly.id - 2].meshx + 1) * (self.layers[ly.id - 2].meshy + 1)
             for i in [0, ly.meshz]:  # 每个layer的最上层和最下层
                 if i == 0 and ly.id == 1:
                     continue  # 第一个layer的最上层不设DG面
                 if i == ly.meshz and ly.id == len(self.layers):
                     continue  # 最后一个layer的最下层不设DG面
+                if i == 0 and ly.connectLow:
+                    continue  # 连接面下layer的最上层不设DG面
+                if i == ly.meshz and ly.connectUp:
+                    continue  # 连接面上layer的最下层不设DG面
+
                 for j in range(ly.meshy):
                     for k in range(ly.meshx):
                         id1 = idbase + (ly.meshx + 1) * (ly.meshy + 1) * i + (ly.meshx + 1) * j + k + 1
